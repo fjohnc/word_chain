@@ -2,6 +2,8 @@
 import streamlit as st
 from dataclasses import dataclass
 from typing import Set, Tuple, Dict, List
+from datetime import date
+import random
 
 # =========================================
 # Data structures & core game logic
@@ -40,11 +42,9 @@ class ChainReaction:
             return False, "A tile would exceed the maximum of 2 connections."
         shared = self.share_tag(a, b)
         if difficulty == "Hard":
-            # Hard rule: exactly one shared tag
             if len(shared) != 1:
                 return False, "Hard mode: tiles must share exactly one tag."
         else:
-            # Easy/Medium: at least one shared tag
             if not shared:
                 return False, "Those tiles don't share a logical link (no common tag)."
         return True, ""
@@ -70,11 +70,9 @@ class ChainReaction:
         n = len(tiles)
         if len(edges) != n - 1:
             return False, "Not all tiles are connected into a single chain yet."
-        # Build adjacency
         adj = {name: set() for name in tiles}
         for a, b in edges:
             adj[a].add(b); adj[b].add(a)
-        # degrees
         degs = {k: len(v) for k, v in adj.items()}
         ones = [k for k, d in degs.items() if d == 1]
         twos = [k for k, d in degs.items() if d == 2]
@@ -83,7 +81,6 @@ class ChainReaction:
             return False, "Some tiles are isolated."
         if len(ones) != 2 or len(twos) != n - 2:
             return False, "Chain must have exactly two ends; others should have two links."
-        # connectivity
         visited = set()
         start = ones[0]
         stack = [start]
@@ -107,7 +104,7 @@ class ChainReaction:
         self.edges = set(self.solution_edges)
 
 # =========================================
-# Puzzle definition & helpers
+# Puzzle generation
 # =========================================
 
 BASE_TILES = [
@@ -119,6 +116,10 @@ BASE_TILES = [
     Tile("Fur", {"fur", "coat"}),
     Tile("Coat", {"coat", "winter"}),
     Tile("Winter", {"winter", "season"}),
+    Tile("Spring", {"season", "flowers"}),
+    Tile("Flowers", {"flowers", "gift"}),
+    Tile("Gift", {"gift", "birthday"}),
+    Tile("Birthday", {"birthday", "cake"}),
 ]
 
 BASE_SOLUTION = {
@@ -129,29 +130,17 @@ BASE_SOLUTION = {
     ("Cat", "Fur"),
     ("Fur", "Coat"),
     ("Coat", "Winter"),
+    ("Winter", "Spring"),
+    ("Spring", "Flowers"),
+    ("Flowers", "Gift"),
+    ("Gift", "Birthday"),
 }
 
-def add_decoys_non_overlapping(tiles: List[Tile], n_decoys_each: int = 1, seed: int = 0) -> List[Tile]:
-    """
-    Adds decoy tags that DO NOT create extra overlaps between different tiles.
-    This increases visual noise when tags are revealed, without enabling the
-    trivial "scan duplicates" tactic.
-    """
-    import random
+def build_puzzle(difficulty: str, seed: int, size: int) -> ChainReaction:
     random.seed(seed)
-    new_tiles: List[Tile] = []
-    for t in tiles:
-        tags = set(t.tags)  # copy original tags
-        for _ in range(n_decoys_each):
-            tags.add(f"decoy:{t.name}:{random.randint(1000,9999)}")
-        new_tiles.append(Tile(t.name, tags))
-    return new_tiles
-
-def build_puzzle(difficulty: str, seed: int) -> 'ChainReaction':
-    tiles = BASE_TILES
-    if difficulty in ("Medium", "Hard"):
-        tiles = add_decoys_non_overlapping(tiles, n_decoys_each=(1 if difficulty == "Medium" else 2), seed=seed)
-    return ChainReaction(tiles, BASE_SOLUTION)
+    tiles = random.sample(BASE_TILES, size)
+    solution_edges = {e for e in BASE_SOLUTION if e[0] in [t.name for t in tiles] and e[1] in [t.name for t in tiles]}
+    return ChainReaction(tiles, solution_edges)
 
 # =========================================
 # Streamlit App
@@ -164,16 +153,20 @@ if "difficulty" not in st.session_state:
     st.session_state.difficulty = "Easy"
 if "seed" not in st.session_state:
     st.session_state.seed = 42
+if "size" not in st.session_state:
+    st.session_state.size = 8
 if "revealed_tags" not in st.session_state:
     st.session_state.revealed_tags = set()
 if "game" not in st.session_state:
-    st.session_state.game = build_puzzle(st.session_state.difficulty, st.session_state.seed)
+    st.session_state.game = build_puzzle(st.session_state.difficulty, st.session_state.seed, st.session_state.size)
 if "message" not in st.session_state:
     st.session_state.message = ""
 
-# Ensure puzzle exists on first load
-if not getattr(st.session_state, "game", None) or not st.session_state.game.tiles:
-    st.session_state.game = build_puzzle(st.session_state.difficulty, st.session_state.seed)
+def new_game(seed: int):
+    st.session_state.seed = seed
+    st.session_state.revealed_tags = set()
+    st.session_state.game = build_puzzle(st.session_state.difficulty, st.session_state.seed, st.session_state.size)
+    st.session_state.message = ""
 
 st.title("🧩 Word Chain — Logic Link Puzzle")
 st.caption("Link all tiles into a single chain. Each valid link must share tags. "
@@ -183,12 +176,14 @@ st.caption("Link all tiles into a single chain. Each valid link must share tags.
 with st.sidebar:
     st.header("Setup")
     st.session_state.difficulty = st.selectbox("Difficulty", ["Easy", "Medium", "Hard"], index=["Easy","Medium","Hard"].index(st.session_state.difficulty))
-    st.session_state.seed = st.number_input("Seed (for consistent puzzles)", min_value=0, step=1, value=st.session_state.seed)
-    if st.button("♻️ New Puzzle", use_container_width=True):
-        st.session_state.revealed_tags = set()
-        st.session_state.game = build_puzzle(st.session_state.difficulty, st.session_state.seed)
-        st.session_state.message = ""
-        st.experimental_rerun()
+    st.session_state.size = st.selectbox("Puzzle size", [8, 10, 12], index=[8,10,12].index(st.session_state.size))
+
+    if st.button("♻️ Random Puzzle", use_container_width=True):
+        new_game(random.randint(0, 99999))
+
+    if st.button("📅 Daily Puzzle", use_container_width=True):
+        today_seed = int(date.today().strftime("%Y%m%d"))
+        new_game(today_seed)
 
     st.markdown("---")
     st.header("Actions")
@@ -224,28 +219,9 @@ with st.sidebar:
         st.session_state.game.edges = set()
         st.session_state.message = "Cleared all links."
 
-    # Inspect-to-reveal (Medium/Hard)
-    if st.session_state.difficulty in ("Medium", "Hard"):
-        st.markdown("---")
-        st.subheader("Inspect")
-        inspect_tile = st.selectbox("Reveal tags for:", options=tiles_list, key="inspect_tile")
-        if st.button("👁️ Reveal", use_container_width=True):
-            st.session_state.revealed_tags.add(inspect_tile)
-            st.session_state.message = f"Revealed tags for {inspect_tile}"
-
 # Feedback toast
 if st.session_state.message:
     st.toast(st.session_state.message)
-
-# Helpers to show tags depending on difficulty and reveals
-def visible_tags(tile_name: str, tags: Set[str]) -> str:
-    diff = st.session_state.difficulty
-    if diff == "Easy":
-        return ", ".join(sorted(tags))
-    # Medium/Hard: only revealed tiles show tags
-    if tile_name in st.session_state.revealed_tags:
-        return ", ".join(sorted(tags)) + "  👁️"
-    return "••• hidden (reveal via Inspect)"
 
 # Layout
 left, right = st.columns([1, 1])
@@ -256,7 +232,7 @@ with left:
     for name, t in st.session_state.game.tiles.items():
         rows.append({
             "Tile": name,
-            "Tags": visible_tags(name, t.tags),
+            "Tags": ", ".join(sorted(t.tags)),
             "Links": st.session_state.game.degree(name)
         })
     st.dataframe(rows, use_container_width=True, hide_index=True)
@@ -271,5 +247,4 @@ with right:
             st.write(f"• **{a} ↔ {b}**  — _shared tag_: {shared if shared else '—'}")
 
 st.markdown("---")
-st.caption("Tips: In Medium/Hard, inspect tiles to reveal tags. In Hard, each link must share exactly one tag. "
-           "Use the seed to keep puzzles consistent for daily challenges.")
+st.caption("Tips: Try the daily puzzle for a consistent challenge or random for variety.")
