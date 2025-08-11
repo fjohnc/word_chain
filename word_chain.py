@@ -202,7 +202,12 @@ def board_rows(game: ChainReaction) -> List[Dict[str, str]]:
 # =============================
 
 st.set_page_config(page_title="Chain Reaction — Logic Link Puzzles", page_icon="🧩", layout="wide")
+# Initialise game state
 init_state()
+
+# Ensure a puzzle exists on first load
+if not hasattr(st.session_state, "game") or not st.session_state.game.tiles:
+    new_puzzle(st.session_state.mode, st.session_state.seed)
 
 st.title("🧩 Chain Reaction — Logic Link Puzzles")
 st.caption("Link all tiles into a single chain. Each valid link must share at least one tag. "
